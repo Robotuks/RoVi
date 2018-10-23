@@ -5,7 +5,7 @@
 
   Version: $$version$$
 */
-
+/****shit*/
 #include <opencv2/highgui.hpp>
 #include <stdio.h>
 #include <iostream>
