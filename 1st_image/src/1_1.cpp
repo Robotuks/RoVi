@@ -9,8 +9,9 @@
 #include <opencv2/highgui.hpp>
 #include <stdio.h>
 #include <iostream>
-
+#include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/photo.hpp>
 
 using namespace cv;
 using namespace std;
@@ -89,36 +90,45 @@ Mat pad(Mat& src)
     return padded;
 }
 
-Mat frequency_magnitude(Mat& img_padded)
+void frequency_magnitude(Mat planes[2])
 {
-    Mat planes[] = {
-            Mat_<float>(img_padded),
-            Mat_<float>::zeros(img_padded.size())
-    };
+
     Mat complex;
     merge(planes, 2, complex);
 
     // Compute DFT
     dft(complex, complex);
     // Split real and complex planes
-   split(complex, planes);
-
-   // Compute the magnitude and phase
-   Mat mag, phase;
-   cartToPolar(planes[0], planes[1], mag, phase);
-
-   // Shift quadrants so the Fourier image origin is in the center of the image
-   dftshift(mag);
-   return mag;
+    split(complex, planes);
 }
 
-void show_frequency_magnitude(Mat& mag)
+
+Mat magnitude_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
 {
-    mag += Scalar::all(1);
-    log(mag, mag);
-    normalize(mag, mag, 0, 1, NORM_MINMAX);
-    namedWindow( "Magnitude", WINDOW_NORMAL  );
-    imshow("Magnitude", mag);
+    // Shift back quadrants of the spectrum
+    dftshift(magnitude);
+
+    // Compute complex DFT planes from magnitude/phase
+    polarToCart(magnitude, phase, planes[0], planes[1]);
+    Mat filtered, complex;
+    // Merge into one image
+    merge(planes, 2, complex);
+    idft(complex, filtered, (cv::DFT_SCALE | cv::DFT_REAL_OUTPUT));
+
+    // Crop image (remove padded borders)
+    filtered = cv::Mat(filtered, cv::Rect(cv::Point(0, 0), img.size()));
+    dftshift(magnitude);
+    return filtered;
+}
+
+void show_frequency_magnitude(Mat& mag, string name)
+{
+    Mat mag1 = mag;
+    mag1 += Scalar::all(1);
+    log(mag1, mag1);
+    normalize(mag1, mag1, 0, 1, NORM_MINMAX);
+    namedWindow( name, WINDOW_NORMAL  );
+    imshow(name, mag1);
 }
 
 int main(int argc, char* argv[])
@@ -128,7 +138,8 @@ int main(int argc, char* argv[])
     CommandLineParser parser(argc, argv,
         // name  | default value    | help message
         "{help   |                  | print this message}"
-        "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image1.png | image path}"
+        "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image4_1.png | image path}"
+        "{@img_number | 41 | }"
     );
 
     if (parser.has("help")) {
@@ -155,32 +166,77 @@ int main(int argc, char* argv[])
           //  imshow("OriginalImage",img);
             //imshow("Padded",padded);
 */
-      Rect2d roi = selectROI(img);
-      // Crop image
-       Mat Crop = img(roi);
-       Mat hist_crp=histogram(Crop);
-       imshow("Cropped Histogram",draw_histogram_image(hist_crp));
 
-     // Display Cropped Image
-      // namedWindow("Imagecr",WINDOW_AUTOSIZE);
-     //  imshow("Imagecr", imCrop);
-         // Show the image  */
-       Mat median;
-      Mat tmp;
-       for ( int i = 1; i < KERNEL_LENGTH; i = i + 2 )
-       {
+    if (parser.get<int>("@img_number") == 1 )
+    {
+
+
+    }
+    else if (parser.get<int>("@img_number") == 3 )
+    {
+        namedWindow("ROI",WINDOW_NORMAL);
+        Rect2d roi = selectROI("ROI",img);
+        // Crop image
+        Mat Crop = img(roi);
+        Mat hist_crp=histogram(Crop);
+        imshow("Cropped Histogram",draw_histogram_image(hist_crp));
+        Mat tmp;
+        Mat fast;
+        /*for ( int i = 3; i < 12; i = i + 2 )
+        {
             GaussianBlur( img, tmp, Size( i, i ), 0, 0 );
-            medianBlur ( tmp, median, i );
-       }
-    Mat img_padded = pad(img);
-    Mat magnitude = frequency_magnitude(img_padded);
-    show_frequency_magnitude(magnitude);
+            //medianBlur ( tmp, median, i );
+            namedWindow(to_string(i),WINDOW_NORMAL);
+            imshow(to_string(i), tmp);
+        }*/
+        fastNlMeansDenoising(img,fast, 20, 5, 35);
+        namedWindow("fast",WINDOW_NORMAL);
+        imshow("fast", fast);
+        //GaussianBlur( img_padded, tmp, Size( KERNEL_LENGTH, KERNEL_LENGTH ), 0, 0 );
+        namedWindow("OriginalImage",WINDOW_NORMAL);
+        imshow("OriginalImage", img);
+    }
+    else if (parser.get<int>("@img_number") == 41 )
+    {
+        Mat img_padded = pad(img);
+        Mat planes[] = {
+                Mat_<float>(img_padded),
+                Mat_<float>::zeros(img_padded.size())
+        };
+        frequency_magnitude( planes);
+        // Compute the magnitude and phase
+        Mat magnitude, phase;
+        cartToPolar(planes[0], planes[1], magnitude, phase);
 
-     namedWindow("OriginalImage",WINDOW_NORMAL);
-     imshow("OriginalImage", img);
+        // Shift quadrants so the Fourier image origin is in the center of the image
+        dftshift(magnitude);
 
-     namedWindow("Median FIlter",WINDOW_NORMAL);
-     imshow("Median FIlter", median);
+        show_frequency_magnitude(magnitude, "Magnitude");
+
+        namedWindow("ROI2",WINDOW_NORMAL);
+        Rect2d roi2 = selectROI("ROI2",magnitude);
+        rectangle(magnitude, roi2, Scalar(0), CV_FILLED);
+        namedWindow("ROI3",WINDOW_NORMAL);
+        Rect2d roi3 = selectROI("ROI3",magnitude);
+        rectangle(magnitude, roi3, Scalar(0), CV_FILLED);
+
+        show_frequency_magnitude(magnitude, "Magnitude_cropped");
+        Mat filtered = magnitude_to_img(magnitude, phase, planes, img);
+        namedWindow("FilteredImage",WINDOW_NORMAL);
+        //cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
+        imshow("FilteredImage", filtered);
+        namedWindow("OriginalImage",WINDOW_NORMAL);
+        imshow("OriginalImage", img);
+    }
+    // Display Cropped Image
+    // namedWindow("Imagecr",WINDOW_AUTOSIZE);
+    //  imshow("Imagecr", imCrop);
+     // Show the image  */
+
+
+
+    //namedWindow("Median FIlter",WINDOW_NORMAL);
+    //imshow("Median FIlter", median);
 
 
 
