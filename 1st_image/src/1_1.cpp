@@ -123,7 +123,8 @@ Mat magnitude_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
 
 void show_frequency_magnitude(Mat& mag, string name)
 {
-    Mat mag1 = mag;
+    Mat mag1 ;
+    mag.copyTo(mag1);
     mag1 += Scalar::all(1);
     log(mag1, mag1);
     normalize(mag1, mag1, 0, 1, NORM_MINMAX);
@@ -203,27 +204,44 @@ int main(int argc, char* argv[])
                 Mat_<float>(img_padded),
                 Mat_<float>::zeros(img_padded.size())
         };
-        frequency_magnitude( planes);
+        Mat complex;
+        merge(planes, 2, complex);
+
+        // Compute DFT
+        dft(complex, complex);
+        Mat planes2[] = {
+                Mat::zeros(complex.size(), CV_32F),
+                Mat::zeros(complex.size(), CV_32F)
+            };
+        // Split real and complex planes
+        split(complex, planes2);
+        //frequency_magnitude( planes);
         // Compute the magnitude and phase
         Mat magnitude, phase;
-        cartToPolar(planes[0], planes[1], magnitude, phase);
+        cartToPolar(planes2[0], planes2[1], magnitude, phase);
 
         // Shift quadrants so the Fourier image origin is in the center of the image
         dftshift(magnitude);
 
-        show_frequency_magnitude(magnitude, "Magnitude");
+        //show_frequency_magnitude(magnitude, "Magnitude");
+        Mat mag_copy ;
+        magnitude.copyTo(mag_copy);
+        mag_copy += Scalar::all(1);
+        log(mag_copy, mag_copy);
+        normalize(mag_copy, mag_copy, 0, 1, NORM_MINMAX);
 
         namedWindow("ROI2",WINDOW_NORMAL);
-        Rect2d roi2 = selectROI("ROI2",magnitude);
+        Rect2d roi2 = selectROI("ROI2", mag_copy);
         rectangle(magnitude, roi2, Scalar(0), CV_FILLED);
+        rectangle(mag_copy, roi2, Scalar(0), CV_FILLED);
         namedWindow("ROI3",WINDOW_NORMAL);
-        Rect2d roi3 = selectROI("ROI3",magnitude);
+        Rect2d roi3 = selectROI("ROI3",mag_copy);
         rectangle(magnitude, roi3, Scalar(0), CV_FILLED);
 
         show_frequency_magnitude(magnitude, "Magnitude_cropped");
         Mat filtered = magnitude_to_img(magnitude, phase, planes, img);
         namedWindow("FilteredImage",WINDOW_NORMAL);
-        //cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
+        cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
         imshow("FilteredImage", filtered);
         namedWindow("OriginalImage",WINDOW_NORMAL);
         imshow("OriginalImage", img);
