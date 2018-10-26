@@ -1,11 +1,3 @@
-/*
-  RoVi1
-  Example application to load and display an image.
-
-
-  Version: $$version$$
-*/
-/****shit*/
 #include <opencv2/highgui.hpp>
 #include <stdio.h>
 #include <iostream>
@@ -131,6 +123,46 @@ void show_frequency_magnitude(Mat& mag, string name)
     imshow(name, mag1);
 }
 
+Mat contraharmonicFilter(Mat input_image, Mat filter)
+{
+    Mat output_image(input_image.rows, input_image.cols, input_image.type());
+    input_image.copyTo(output_image);
+    double sum[3], sum1[3];
+    double Q = filter.ptr<double>(0)[0];
+
+    for (int r = 0; r < output_image.rows; r++) {
+        for (int c = 0; c < output_image.cols; c++) {
+            sum[0] = sum[1] = sum[2] = 0;
+            sum1[0] = sum1[1] = sum1[2] = 0;
+
+            int i = (r-filter.rows/2<0)?0:r-filter.rows/2;
+            for (; i < output_image.rows && i <= r+filter.rows/2; i++) {
+                int j = (c - filter.cols/2<0)?0:c-filter.cols/2;
+                for (; j < output_image.cols && j <= c+filter.cols/2; j++) {
+                    for (int n = 0; n < output_image.channels()&&n<3; n++) {
+                        if (output_image.channels()==1) {
+                            sum[n] += pow(input_image.ptr<uchar>(i)[j], 1+Q);
+                            sum1[n] += pow(input_image.ptr<uchar>(i)[j], Q);
+                        } else if (output_image.channels() == 3) {
+                            sum[n] += pow(input_image.at<Vec3b>(i, j)[n], 1+Q);
+                            sum1[n] += pow(input_image.at<Vec3b>(i, j)[n], Q);
+                        } else {
+                            sum[n] += pow(input_image.at<Vec4b>(i, j)[n], 1+Q);
+                            sum1[n] += pow(input_image.at<Vec4b>(i, j)[n], Q);
+                        }
+                    }
+                }
+            }
+             for (int n = 0; n < output_image.channels() && n<3; n++) {
+                if (output_image.channels()==1)        output_image.ptr<uchar>(r)[c] = saturate_cast<uchar>(sum[n]/sum1[n]);
+                else if (output_image.channels() == 3) output_image.at<Vec3b>(r, c)[n] = saturate_cast<uchar>(sum[n]/sum1[n]);
+                else output_image.at<Vec4b>(r, c)[n] = saturate_cast<uchar>(sum[n]/sum1[n]);
+            }
+        }
+    }
+    return output_image;
+}
+
 int main(int argc, char* argv[])
 {
     // Parse command line arguments -- the first positional argument expects an
@@ -138,7 +170,7 @@ int main(int argc, char* argv[])
     CommandLineParser parser(argc, argv,
         // name  | default value    | help message
         "{help   |                  | print this message}"
-        "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image4_1.png | image path}"
+        "{@image | /home/student/Desktop/RoVi/Images/ImagesForStudents/Image4_2.png | image path}"
         "{@img_number | 41 | }"
     );
 
@@ -169,7 +201,9 @@ int main(int argc, char* argv[])
 
     if (parser.get<int>("@img_number") == 1 )
     {
-
+    
+    Mat ft = (Mat_<double>(7,7)<<0.5); //7*7 is the kernel lenth, sec arg>0 remove pepper noise, <0 salt noise
+    Mat dst=contraharmonicFilter(img, ft);
 
     }
     else if (parser.get<int>("@img_number") == 3 )
