@@ -140,7 +140,7 @@ int main(int argc, char* argv[])
         // name  | default value    | help message
         "{help   |                  | print this message}"
         "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image4_1.png | image path}"
-        "{@img_number | 41 | }"
+        "{@img_number | 4 | }"
     );
 
     if (parser.has("help")) {
@@ -190,14 +190,14 @@ int main(int argc, char* argv[])
             namedWindow(to_string(i),WINDOW_NORMAL);
             imshow(to_string(i), tmp);
         }*/
-        fastNlMeansDenoising(img,fast, 20, 5, 35);
+        fastNlMeansDenoising(img,fast, 12, 5, 35);
         namedWindow("fast",WINDOW_NORMAL);
         imshow("fast", fast);
         //GaussianBlur( img_padded, tmp, Size( KERNEL_LENGTH, KERNEL_LENGTH ), 0, 0 );
         namedWindow("OriginalImage",WINDOW_NORMAL);
         imshow("OriginalImage", img);
     }
-    else if (parser.get<int>("@img_number") == 41 )
+    else if (parser.get<int>("@img_number") == 4 )
     {
         Mat img_padded = pad(img);
         Mat planes[] = {
