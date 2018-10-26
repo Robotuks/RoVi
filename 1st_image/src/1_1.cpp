@@ -194,7 +194,7 @@ Mat butter_lowpass(float d0, int n, Size size)
     return lpf;
 }
 
-cv::Mat butter_highpass(float d0, int n, cv::Size size)
+Mat butter_highpass(float d0, int n, cv::Size size)
 {
     cv::Mat_<cv::Vec2f> hpf(size);
     cv::Point2f c = cv::Point2f(size) / 2;
@@ -269,6 +269,100 @@ Mat apply_filter(Mat cmp, Mat filter, Mat img)
      return filtered;
 }
 
+void median(Mat& src, Mat& dst, int kSize){
+
+    Mat _src;
+    // creates a border around the source image to not have to verify conditions near the edge of the original image
+    copyMakeBorder(src, _src, (kSize/2), (kSize/2), (kSize/2), (kSize/2), BORDER_REPLICATE);
+
+    for(int i = (kSize/2); i < _src.rows-(kSize/2); i++){
+        for(int j = (kSize/2); j < _src.cols-(kSize/2); j++){
+
+            vector<uchar> pixels;
+
+            for(int k = i-(kSize/2); k <= i+(kSize/2); k++){
+                for(int w = j-(kSize/2); w <= j+(kSize/2); w++){
+                    pixels.push_back(_src.at<uchar>(k,w));
+                }
+            }
+
+            // sort the pixels of the window filter
+            sort(pixels.begin(), pixels.end());
+
+            // takes the middle
+            dst.at<uchar>(i-(kSize/2),j-(kSize/2)) = pixels.at((kSize*kSize)/2);
+        }
+}
+}
+void adaptiveMedianFilter(Mat& src)
+{
+
+    int maskSize =3;
+    int maxMaskSize=11;
+    Mat img =src.clone(); //Image we're filtering
+    Mat dest = src.clone();
+    int xMax = img.rows-(maskSize-1)/2;     //These integers asures that we dont acces the image outside of it's borders
+    int yMax = img.cols-(maskSize-1)/2;    //(masksize-1)-2 is due to the 1 pixel in the center we are looking at, and divide by two as only the mask part facing the border is the problem
+    vector<int> medianVec;
+    int median;
+    int medianIndex = (maskSize*maskSize-1)/2; //The minus one is due to the index at vectors starting at 0
+    for (int x = (maskSize-1)/2; x <= xMax; x++)
+        {
+        //These 2 for loops go through all of the picture
+        for (int y = (maskSize-1)/2; y<= yMax; y++)
+        {
+            for(int maskX = -(maskSize-1)/2; maskX <= (maskSize-1)/2; maskX++) //Looping through the mask
+            {
+                for(int maskY = -(maskSize-1)/2; maskY <=(maskSize-1)/2; maskY++)
+                {
+                    medianVec.push_back(img.at<uchar>(x+maskX, y+maskY));
+                }
+            }
+            sort(medianVec.begin(), medianVec.begin()+maskSize*maskSize); //Sorting the values in the mask and finding the median
+            median = medianVec[medianIndex];
+          // dest.at<uchar>(x, y) = median;
+
+            if (median == 0 || median == 255) //If we still have salt or pepper in the median, we need to increase the mask size
+            {
+            medianVec.clear();
+                while (maskSize <= maxMaskSize) //Keep increasing as long as our mask is under the max size
+                {
+                    maskSize = maskSize +2;
+                    xMax = img.rows-(maskSize-1)/2; //We also need to update our indexes and bounds to not get any errors
+                    yMax = img.cols-(maskSize-1)/2;
+                    medianIndex = (maskSize*maskSize-1)/2; //The minus one is due to the index at vectors starting at 0
+                    for(int maskX = -(maskSize-1)/2; maskX <= (maskSize-1)/2; maskX++) //Looping through the mask
+                        for(int maskY = -(maskSize-1)/2; maskY <= (maskSize-1)/2; maskY++)
+                        {
+                            medianVec.push_back(img.at<uchar>(x+maskX, y+maskY));
+                        }
+                    sort(medianVec.begin(), medianVec.begin()+maskSize*maskSize); //Sorting the values in the mask and finding the median
+                    median = medianVec[medianIndex];
+                    medianVec.clear();
+
+                    if(median != 0)
+                        if(median != 255)
+                            break;
+
+                }
+            }
+             dest.at<uchar>(x, y) = median;
+            //Setting our mask size and indexes back to normal
+            maskSize = 3;
+            xMax = img.rows-(maskSize-1)/2; //We also need to update our indexes and bounds to not get any errors
+            yMax = img.cols-(maskSize-1)/2;
+            medianIndex = (maskSize*maskSize-1)/2; //The minus one is due to the index at vectors starting at 0
+            medianVec.clear();
+
+            }
+        }
+
+
+
+    namedWindow("test",WINDOW_NORMAL);
+    imshow("test",dest);
+
+}
 
 int main(int argc, char* argv[])
 {
@@ -277,8 +371,8 @@ int main(int argc, char* argv[])
     CommandLineParser parser(argc, argv,
         // name  | default value    | help message
         "{help   |                  | print this message}"
-        "{@image | /home/student/Desktop/RoVi/Images/ImagesForStudents/Image4_2.png | image path}"
-        "{@img_number | 41 | }"
+        "{@image | /home/student/Desktop/RoVi/Images/ImagesForStudents/Image2.png | image path}"
+        "{@img_number | 2 | }"
     );
 
     if (parser.has("help")) {
@@ -295,22 +389,38 @@ int main(int argc, char* argv[])
         cout << "Input image not found at '" << filepath << "'\n";
         return 1;
     }
-  /* Mat padded;
-            int opt_rows = getOptimalDFTSize(img.rows*2-1);
-            int opt_cols = getOptimalDFTSize(img.cols*2-1);
-            copyMakeBorder(img,padded,0,opt_rows-img.rows,0,opt_cols-img.cols,BORDER_CONSTANT,Scalar::all(0));
 
-            //namedWindow("OriginalImage",WINDOW_NORMAL);
-            //namedWindow("Padded",WINDOW_NORMAL);
-          //  imshow("OriginalImage",img);
-            //imshow("Padded",padded);
-*/
 
     if (parser.get<int>("@img_number") == 1 )
     {
     
     Mat ft = (Mat_<double>(7,7)<<0.5); //7*7 is the kernel lenth, sec arg>0 remove pepper noise, <0 salt noise
     Mat dst=contraharmonicFilter(img, ft);
+
+    }
+
+    if (parser.get<int>("@img_number") == 2 )
+    {
+
+        Mat tmp;
+       Mat median;
+       for ( int i = 3; i < 12; i = i + 2 )
+       {
+            GaussianBlur( img, tmp, Size( i, i ), 0, 0 );
+            medianBlur ( tmp, median, i );
+            //namedWindow(to_string(i),WINDOW_NORMAL);
+           //imshow(to_string(i), tmp);
+       }
+
+       namedWindow("median",WINDOW_NORMAL);
+       imshow("median",median);
+
+
+
+
+
+
+    while (waitKey() != 27);
 
     }
     else if (parser.get<int>("@img_number") == 3 )
@@ -324,7 +434,7 @@ int main(int argc, char* argv[])
         Mat tmp;
         Mat fast;
         /*for ( int i = 3; i < 12; i = i + 2 )
-        {
+
             GaussianBlur( img, tmp, Size( i, i ), 0, 0 );
             //medianBlur ( tmp, median, i );
             namedWindow(to_string(i),WINDOW_NORMAL);
@@ -441,8 +551,8 @@ int main(int argc, char* argv[])
 
     // Wait for escape key press before returning
         */
-    while (waitKey() != 27)
-        ; // (do nothing)
+    while (waitKey() != 27);
+
 
     return 0;
 }
