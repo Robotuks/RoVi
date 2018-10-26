@@ -1,8 +1,3 @@
-/*
-  RoVi1
-  Example application to load and display an image.
-   Version: $$version$$
-*/
 #include <opencv2/highgui.hpp>
 #include <stdio.h>
 #include <iostream>
@@ -16,6 +11,8 @@ using namespace std;
 int KERNEL_LENGTH=31;
 int DELAY_CAPTION = 1500;
 int DELAY_BLUR = 100;
+
+
 
 Mat histogram(const Mat& img)
 {
@@ -155,16 +152,23 @@ Mat max_filter(const Mat& img)
     return out;
 }
 
-void frequency_spectrum(Mat planes[2])
+Mat frequency_spectrum(Mat& src)
 {
 
-    Mat complex;
+    Mat planes[] = {
+                   Mat_<float>(src),
+                   Mat_<float>::zeros(src.size())
+    };
+
+    Mat_<cv::Vec2f>complex;
     merge(planes, 2, complex);
 
     // Compute DFT
     dft(complex, complex);
     // Split real and complex planes
-    split(complex, planes);
+   // split(complex, planes);
+
+    return complex;
 }
 
 Mat complex_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
@@ -235,6 +239,103 @@ Mat contraharmonicFilter(Mat input_image, Mat filter)
     }
     return output_image;
 }
+
+Mat butter_lowpass(float d0, int n, Size size)
+{
+    cv::Mat_<cv::Vec2f> lpf(size);
+    cv::Point2f c = cv::Point2f(size) / 2;
+
+    for (int i = 20; i < size.height; ++i) {
+        for (int j = 20; j < size.width; ++j) {
+            // Distance from point (i,j) to the origin of the Fourier transform
+            float d = std::sqrt((i - c.y) * (i - c.y) + (j - c.x) * (j - c.x));
+
+            // Real part
+            lpf(i, j)[0] = 1 / (1 + std::pow(d / d0, 2 * n));
+
+            // Imaginary part
+            lpf(i, j)[1] = 0;
+        }
+    }
+
+    return lpf;
+}
+
+cv::Mat butter_highpass(float d0, int n, cv::Size size)
+{
+    cv::Mat_<cv::Vec2f> hpf(size);
+    cv::Point2f c = cv::Point2f(size) / 2;
+
+    for (int i = 0; i < size.height; ++i) {
+        for (int j = 0; j < size.width; ++j) {
+            // Distance from point (i,j) to the origin of the Fourier transform
+            float d = std::sqrt((i - c.y) * (i - c.y) + (j - c.x) * (j - c.x));
+
+            // Real part
+            if (std::abs(d) < 1.e-9f) // Avoid division by zero
+                hpf(i, j)[0] = 0;
+            else {
+                hpf(i, j)[0] = 1 / (1 + std::pow(d0 / d, 2 * n));
+            }
+
+            // Imaginary part
+            hpf(i, j)[1] = 0;
+        }
+    }
+
+    return hpf;
+}
+float getRadius(int cols, int rows, float rad){
+    int min = cols;
+    if(rows < cols){
+        min = rows;
+    }
+    return rad*min/2;
+}
+void bandRejectFilter(Mat &imgReal, float low, float high){
+    int rows = imgReal.rows;
+    int cols = imgReal.cols;
+    float h = getRadius(cols, rows, high);
+    float l = getRadius(cols, rows, low);
+    float high2 = h*h;
+    float low2 = l*l;
+    for(int i = 0; i < cols; i++){
+        for(int j = 0; j < rows; j++){
+            int dj = (j < rows / 2) ? j : rows - j;
+            int di = (i < cols / 2) ? i : cols - i;
+            float dist2 = dj*dj + di*di;
+            if(dist2 > low2 && dist2 < high2){
+                imgReal.at<float>(j,i) = 0;
+                           }
+        }
+    }
+}
+
+Mat apply_filter(Mat cmp, Mat filter, Mat img)
+{
+     mulSpectrums(cmp, filter, cmp, 0);
+     // Multiply Fourier image with filter
+     mulSpectrums(cmp, filter, cmp, 0);
+
+     // Shift back
+     dftshift(cmp);
+     // Compute inverse DFT
+     Mat filtered;
+     idft(cmp, filtered, (cv::DFT_SCALE | cv::DFT_REAL_OUTPUT));
+
+     // Crop image (remove padded borders)
+     filtered = Mat(filtered, cv::Rect(cv::Point(0, 0), img.size()));
+
+     Mat filter_planes[2];
+     split(filter, filter_planes); // We can only display the real part
+     normalize(filter_planes[0], filter_planes[0], 0, 1, cv::NORM_MINMAX);
+     namedWindow("Filter",WINDOW_NORMAL);
+     imshow("Filter", filter_planes[0]);
+
+     normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
+     return filtered;
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -320,46 +421,71 @@ int main(int argc, char* argv[])
         namedWindow("OriginalImage",WINDOW_NORMAL);
         imshow("OriginalImage", img);
     }
-    else if (parser.get<int>("@img_number") == 4 )
+    else if (parser.get<int>("@img_number") == 41 )
+       {
+           Mat img_padded = pad(img);
+           Mat planes[] = {
+                   Mat_<float>(img_padded),
+                   Mat_<float>::zeros(img_padded.size())
+           };
+
+           Mat cmp=frequency_spectrum(img);
+            split(cmp,planes);
+           // Compute the magnitude and phase
+           Mat magnitude, phase;
+           cartToPolar(planes[0], planes[1], magnitude, phase);
+
+           // Shift quadrants so the Fourier image origin is in the center of the image
+           dftshift(magnitude);
+
+           Mat mag_copy ;
+           magnitude.copyTo(mag_copy);
+           mag_copy += Scalar::all(1);
+           log(mag_copy, mag_copy);
+           normalize(mag_copy, mag_copy, 0, 1, NORM_MINMAX);
+
+           vector<Rect> ROIs;
+           namedWindow("ROI", WINDOW_NORMAL);
+           selectROIs("ROI", mag_copy, ROIs);
+
+           if(ROIs.size()<1)
+                return 0;
+           for (size_t i = 0; i < ROIs.size(); i++)
+           {
+               rectangle(magnitude, ROIs[i], Scalar(0), CV_FILLED);
+           }
+
+           show_frequency_spectrum(magnitude, "Magnitude_cropped");
+           Mat filtered = complex_to_img(magnitude, phase, planes, img);
+           namedWindow("FilteredImage",WINDOW_NORMAL);
+           cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
+           imshow("FilteredImage", filtered);
+           namedWindow("OriginalImage",WINDOW_NORMAL);
+           imshow("OriginalImage", img);
+   }
+
+    else if (parser.get<int>("@img_number") == 42 )
     {
-        Mat img_padded = pad(img);
-        Mat planes[] = {
-                Mat_<float>(img_padded),
-                Mat_<float>::zeros(img_padded.size())
-        };
+        Mat padded=pad(img);
+        Mat cmp=frequency_spectrum(padded);
+        dftshift(cmp);
 
-        frequency_spectrum( planes);
-        // Compute the magnitude and phase
-        Mat magnitude, phase;
-        cartToPolar(planes[0], planes[1], magnitude, phase);
 
-        // Shift quadrants so the Fourier image origin is in the center of the image
-        dftshift(magnitude);
+        Mat filter;
+        filter = butter_lowpass(500, 3, cmp.size());
+          /*  if (parser.has("lowpass")) {
+                filter = butter_lowpass(250, 2, complex.size());
+            } else {
+                filter = butter_highpass(250, 2, complex.size());
+            }
+            */
 
-        Mat mag_copy ;
-        magnitude.copyTo(mag_copy);
-        mag_copy += Scalar::all(1);
-        log(mag_copy, mag_copy);
-        normalize(mag_copy, mag_copy, 0, 1, NORM_MINMAX);
-
-        vector<Rect> ROIs;
-        namedWindow("ROI", WINDOW_NORMAL);
-        selectROIs("ROI", mag_copy, ROIs);
-
-        if(ROIs.size()<1)
-             return 0;
-        for (size_t i = 0; i < ROIs.size(); i++)
-        {
-            rectangle(magnitude, ROIs[i], Scalar(0), CV_FILLED);
-        }
-
-        show_frequency_spectrum(magnitude, "Magnitude_cropped");
-        Mat filtered = complex_to_img(magnitude, phase, planes, img);
-        namedWindow("FilteredImage",WINDOW_NORMAL);
-        cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
-        imshow("FilteredImage", filtered);
-        namedWindow("OriginalImage",WINDOW_NORMAL);
-        imshow("OriginalImage", img);
+        Mat filtered=apply_filter(cmp,filter,img);
+        namedWindow("Filtered image",WINDOW_NORMAL);
+        imshow("Filtered image", filtered);
+        // Visualize
+        namedWindow("Input",WINDOW_NORMAL);
+        imshow("Input", img);
     }
 
     // Wait for escape key press before returning
@@ -367,4 +493,5 @@ int main(int argc, char* argv[])
         ; // (do nothing)
 
     return 0;
+
 }
