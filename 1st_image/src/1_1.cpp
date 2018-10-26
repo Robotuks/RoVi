@@ -1,11 +1,8 @@
 /*
   RoVi1
   Example application to load and display an image.
-
-
-  Version: $$version$$
+   Version: $$version$$
 */
-
 #include <opencv2/highgui.hpp>
 #include <stdio.h>
 #include <iostream>
@@ -51,6 +48,35 @@ Mat draw_histogram_image(const Mat& hist)
     return img;
 }
 
+Mat histogram_equalization(const Mat& img)
+{
+    // Calculate the histogram of 'img'
+    Mat hist = histogram(img);
+
+    // Build transformation function using float type (type should be able to
+    // at least hold the summed bins).
+    Mat tf = Mat::zeros(hist.size(), CV_32FC1);
+    float c = float(hist.rows - 1) / (img.rows * img.cols);
+
+    for (int i = 0; i < hist.rows; i++) {
+        for (int j = 0; j < i; j++) {
+            tf.at<float>(i) += hist.at<float>(j);
+        }
+
+        tf.at<float>(i) *= c;
+    }
+
+    // Convert to 8-bit due to cv::LUT
+    tf.convertTo(tf, CV_8U);
+
+    // Apply mapping to obtain intensity values for the equalized image
+    // such that eq_img(x,y) = tf( img(x,y) )
+    Mat eq_img;
+    LUT(img, tf, eq_img);
+
+    return eq_img;
+}
+
 // Rearranges the quadrants of a Fourier image so that the origin is at the
 // center of the image.
 void dftshift(Mat& mag)
@@ -90,6 +116,45 @@ Mat pad(Mat& src)
     return padded;
 }
 
+Mat max_filter(const Mat& img)
+{
+    // Pad original with border
+    Mat padded;
+    copyMakeBorder(img, padded, 2, 2, 2, 2, BORDER_REPLICATE);
+
+    // Output image
+    Mat out(img.size(), img.type());
+
+    for (int i = 2; i < padded.rows - 3; i++) {
+        // Pointers to previous, current and next rows
+        uchar* r[] = {
+            padded.ptr<uchar>(i - 2),
+            padded.ptr<uchar>(i - 1),
+            padded.ptr<uchar>(i),
+            padded.ptr<uchar>(i + 1),
+            padded.ptr<uchar>(i + 2)
+        };
+
+        for (int j = 2; j < padded.cols - 3; j++) {
+            // Column vector of neighboring pixels
+            Vec<uchar, 25> v;
+            v << r[0][j-2], r[0][j-1], r[0][j], r[0][j+1], r[0][j+2],
+                 r[1][j-2], r[1][j-1], r[1][j], r[1][j+1], r[1][j+2],
+                 r[2][j-2], r[2][j-1], r[2][j], r[2][j+1], r[2][j+2],
+                 r[3][j-2], r[3][j-1], r[3][j], r[3][j+1], r[3][j+2],
+                 r[4][j-2], r[4][j-1], r[4][j], r[4][j+1], r[4][j+2];
+
+            // Sort the vector
+            cv::sort(v, v, (SORT_EVERY_COLUMN | SORT_ASCENDING));
+
+            // Assign new pixel value as the mean of the middle 3 values
+            out.at<uchar>(i - 2, j - 2) = v(22);
+        }
+    }
+
+    return out;
+}
+
 void frequency_spectrum(Mat planes[2])
 {
 
@@ -102,8 +167,7 @@ void frequency_spectrum(Mat planes[2])
     split(complex, planes);
 }
 
-
-Mat magnitude_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
+Mat complex_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
 {
     // Shift back quadrants of the spectrum
     dftshift(magnitude);
@@ -132,6 +196,46 @@ void show_frequency_spectrum(Mat& mag, string name)
     imshow(name, mag1);
 }
 
+Mat contraharmonicFilter(Mat input_image, Mat filter)
+{
+    Mat output_image(input_image.rows, input_image.cols, input_image.type());
+    input_image.copyTo(output_image);
+    double sum[3], sum1[3];
+    double Q = filter.ptr<double>(0)[0];
+
+    for (int r = 0; r < output_image.rows; r++) {
+        for (int c = 0; c < output_image.cols; c++) {
+            sum[0] = sum[1] = sum[2] = 0;
+            sum1[0] = sum1[1] = sum1[2] = 0;
+
+            int i = (r-filter.rows/2<0)?0:r-filter.rows/2;
+            for (; i < output_image.rows && i <= r+filter.rows/2; i++) {
+                int j = (c - filter.cols/2<0)?0:c-filter.cols/2;
+                for (; j < output_image.cols && j <= c+filter.cols/2; j++) {
+                    for (int n = 0; n < output_image.channels()&&n<3; n++) {
+                        if (output_image.channels()==1) {
+                            sum[n] += pow(input_image.ptr<uchar>(i)[j], 1+Q);
+                            sum1[n] += pow(input_image.ptr<uchar>(i)[j], Q);
+                        } else if (output_image.channels() == 3) {
+                            sum[n] += pow(input_image.at<Vec3b>(i, j)[n], 1+Q);
+                            sum1[n] += pow(input_image.at<Vec3b>(i, j)[n], Q);
+                        } else {
+                            sum[n] += pow(input_image.at<Vec4b>(i, j)[n], 1+Q);
+                            sum1[n] += pow(input_image.at<Vec4b>(i, j)[n], Q);
+                        }
+                    }
+                }
+            }
+             for (int n = 0; n < output_image.channels() && n<3; n++) {
+                if (output_image.channels()==1)        output_image.ptr<uchar>(r)[c] = saturate_cast<uchar>(sum[n]/sum1[n]);
+                else if (output_image.channels() == 3) output_image.at<Vec3b>(r, c)[n] = saturate_cast<uchar>(sum[n]/sum1[n]);
+                else output_image.at<Vec4b>(r, c)[n] = saturate_cast<uchar>(sum[n]/sum1[n]);
+            }
+        }
+    }
+    return output_image;
+}
+
 int main(int argc, char* argv[])
 {
     // Parse command line arguments -- the first positional argument expects an
@@ -139,8 +243,8 @@ int main(int argc, char* argv[])
     CommandLineParser parser(argc, argv,
         // name  | default value    | help message
         "{help   |                  | print this message}"
-        "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image4_1.png | image path}"
-        "{@img_number | 4 | }"
+        "{@image | /home/student/workspace/vision/Vision_Mini_Project/Images/ImagesForStudents/Image1.png | image path}"
+        "{@img_number | 1 | }"
     );
 
     if (parser.has("help")) {
@@ -157,21 +261,40 @@ int main(int argc, char* argv[])
         cout << "Input image not found at '" << filepath << "'\n";
         return 1;
     }
-  /* Mat padded;
-            int opt_rows = getOptimalDFTSize(img.rows*2-1);
-            int opt_cols = getOptimalDFTSize(img.cols*2-1);
-            copyMakeBorder(img,padded,0,opt_rows-img.rows,0,opt_cols-img.cols,BORDER_CONSTANT,Scalar::all(0));
-
-            //namedWindow("OriginalImage",WINDOW_NORMAL);
-            //namedWindow("Padded",WINDOW_NORMAL);
-          //  imshow("OriginalImage",img);
-            //imshow("Padded",padded);
-*/
 
     if (parser.get<int>("@img_number") == 1 )
     {
+    namedWindow("Original",WINDOW_NORMAL);
+    imshow("Original", img);
+    Mat max_filtered = max_filter(img);
+    //namedWindow("ROI",WINDOW_NORMAL);
+    //Rect2d roi = selectROI("ROI",max_filtered);
+    // Crop image
+    //Mat Crop = max_filtered(roi);
+    //Mat hist_crp=histogram(Crop);
+    //imshow("Cropped Histogram",draw_histogram_image(hist_crp));
+    namedWindow("Max FIlter",WINDOW_NORMAL);
+    imshow("Max FIlter", max_filtered);
 
+    Mat Bilateral;
+    bilateralFilter( max_filtered, Bilateral, 100, 10, 10);
+    namedWindow("Bilateral",WINDOW_NORMAL);
+    imshow("Bilateral", Bilateral);                             ///final
+    Mat equalized = histogram_equalization(Bilateral);
+    namedWindow("equalized",WINDOW_NORMAL);
+    imshow("equalized", equalized);
+    //Mat gaus, median;
+    //medianBlur(max_filtered, median,  17);
+    //GaussianBlur(max_filtered, gaus,  Size(7, 7), 0, 0);
+    //namedWindow("Gaussian",WINDOW_NORMAL);
+    //mshow("Gaussian", gaus);
+    //Mat ft = (Mat_<double>(7,7)<<0); //7*7 is the kernel lenth, sec arg>0 remove pepper noise, <0 salt noise
+    //Mat dst = contraharmonicFilter(max_filtered, ft);
+    //namedWindow("median",WINDOW_NORMAL);
+    //imshow("median", median);
 
+    //namedWindow("contraharmonic",WINDOW_NORMAL);
+    //imshow("contraharmonic", dst);
     }
     else if (parser.get<int>("@img_number") == 3 )
     {
@@ -231,24 +354,13 @@ int main(int argc, char* argv[])
         }
 
         show_frequency_spectrum(magnitude, "Magnitude_cropped");
-        Mat filtered = magnitude_to_img(magnitude, phase, planes, img);
+        Mat filtered = complex_to_img(magnitude, phase, planes, img);
         namedWindow("FilteredImage",WINDOW_NORMAL);
         cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
         imshow("FilteredImage", filtered);
         namedWindow("OriginalImage",WINDOW_NORMAL);
         imshow("OriginalImage", img);
     }
-    // Display Cropped Image
-    // namedWindow("Imagecr",WINDOW_AUTOSIZE);
-    //  imshow("Imagecr", imCrop);
-     // Show the image  */
-
-
-
-    //namedWindow("Median FIlter",WINDOW_NORMAL);
-    //imshow("Median FIlter", median);
-
-
 
     // Wait for escape key press before returning
     while (waitKey() != 27)
