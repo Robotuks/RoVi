@@ -45,6 +45,35 @@ Mat draw_histogram_image(const Mat& hist)
     return img;
 }
 
+Mat histogram_equalization(const Mat& img)
+{
+    // Calculate the histogram of 'img'
+    Mat hist = histogram(img);
+
+    // Build transformation function using float type (type should be able to
+    // at least hold the summed bins).
+    Mat tf = Mat::zeros(hist.size(), CV_32FC1);
+    float c = float(hist.rows - 1) / (img.rows * img.cols);
+
+    for (int i = 0; i < hist.rows; i++) {
+        for (int j = 0; j < i; j++) {
+            tf.at<float>(i) += hist.at<float>(j);
+        }
+
+        tf.at<float>(i) *= c;
+    }
+
+    // Convert to 8-bit due to cv::LUT
+    tf.convertTo(tf, CV_8U);
+
+    // Apply mapping to obtain intensity values for the equalized image
+    // such that eq_img(x,y) = tf( img(x,y) )
+    Mat eq_img;
+    LUT(img, tf, eq_img);
+
+    return eq_img;
+}
+
 // Rearranges the quadrants of a Fourier image so that the origin is at the
 // center of the image.
 void dftshift(Mat& mag)
@@ -84,6 +113,87 @@ Mat pad(Mat& src)
     return padded;
 }
 
+Mat max_filter(const Mat& img)
+{
+    // Pad original with border
+    Mat padded;
+    copyMakeBorder(img, padded, 2, 2, 2, 2, BORDER_REPLICATE);
+
+    // Output image
+    Mat out(img.size(), img.type());
+
+    for (int i = 2; i < padded.rows - 3; i++) {
+        // Pointers to previous, current and next rows
+        uchar* r[] = {
+            padded.ptr<uchar>(i - 2),
+            padded.ptr<uchar>(i - 1),
+            padded.ptr<uchar>(i),
+            padded.ptr<uchar>(i + 1),
+            padded.ptr<uchar>(i + 2)
+        };
+
+        for (int j = 2; j < padded.cols - 3; j++) {
+            // Column vector of neighboring pixels
+            Vec<uchar, 25> v;
+            v << r[0][j-2], r[0][j-1], r[0][j], r[0][j+1], r[0][j+2],
+                 r[1][j-2], r[1][j-1], r[1][j], r[1][j+1], r[1][j+2],
+                 r[2][j-2], r[2][j-1], r[2][j], r[2][j+1], r[2][j+2],
+                 r[3][j-2], r[3][j-1], r[3][j], r[3][j+1], r[3][j+2],
+                 r[4][j-2], r[4][j-1], r[4][j], r[4][j+1], r[4][j+2];
+
+            // Sort the vector
+           cv::sort(v, v, (SORT_EVERY_COLUMN | SORT_ASCENDING));
+
+            // Assign new pixel value as the mean of the middle 3 values
+            out.at<uchar>(i - 2, j - 2) = v(22);
+        }
+    }
+
+    return out;
+}
+
+
+Mat med_filter(const Mat& img)
+{
+
+    // Pad original with border
+    Mat padded;
+    copyMakeBorder(img, padded, 2, 2, 2, 2, BORDER_REPLICATE);
+
+    // Output image
+    Mat out(img.size(), img.type());
+
+    for (int i = 2; i < padded.rows - 3; i++) {
+        // Pointers to previous, current and next rows
+        uchar* r[] = {
+            padded.ptr<uchar>(i - 2),
+            padded.ptr<uchar>(i - 1),
+            padded.ptr<uchar>(i),
+            padded.ptr<uchar>(i + 1),
+            padded.ptr<uchar>(i + 2)
+        };
+
+        for (int j = 2; j < padded.cols - 3; j++) {
+            // Column vector of neighboring pixels
+            Vec<uchar, 25> v;
+            v << r[0][j-2], r[0][j-1], r[0][j], r[0][j+1], r[0][j+2],
+                 r[1][j-2], r[1][j-1], r[1][j], r[1][j+1], r[1][j+2],
+                 r[2][j-2], r[2][j-1], r[2][j], r[2][j+1], r[2][j+2],
+                 r[3][j-2], r[3][j-1], r[3][j], r[3][j+1], r[3][j+2],
+                 r[4][j-2], r[4][j-1], r[4][j], r[4][j+1], r[4][j+2];
+
+            // Sort the vector
+           cv::sort(v, v, (SORT_EVERY_COLUMN | SORT_ASCENDING));
+
+            // Assign new pixel value as the mean of the middle 3 values
+            out.at<uchar>(i - 2, j - 2) = v(9);
+        }
+    }
+
+    return out;
+}
+
+
 Mat frequency_spectrum(Mat& src)
 {
 
@@ -103,8 +213,7 @@ Mat frequency_spectrum(Mat& src)
     return complex;
 }
 
-
-Mat magnitude_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
+Mat complex_to_img(Mat& magnitude, Mat& phase, Mat planes[2], Mat& img)
 {
     // Shift back quadrants of the spectrum
     dftshift(magnitude);
@@ -373,7 +482,7 @@ int main(int argc, char* argv[])
         "{help   |                  | print this message}"
         "{@image | /home/student/Desktop/RoVi/Images/ImagesForStudents/Image2.png | image path}"
         "{@img_number | 2 | }"
-    );
+);
 
     if (parser.has("help")) {
         parser.printMessage();
@@ -390,34 +499,56 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-
     if (parser.get<int>("@img_number") == 1 )
     {
-    
-    Mat ft = (Mat_<double>(7,7)<<0.5); //7*7 is the kernel lenth, sec arg>0 remove pepper noise, <0 salt noise
-    Mat dst=contraharmonicFilter(img, ft);
+    namedWindow("Original",WINDOW_NORMAL);
+    imshow("Original", img);
+    Mat max_filtered = max_filter(img);
+    //namedWindow("ROI",WINDOW_NORMAL);
+    //Rect2d roi = selectROI("ROI",max_filtered);
+    // Crop image
+    //Mat Crop = max_filtered(roi);
+    //Mat hist_crp=histogram(Crop);
+    //imshow("Cropped Histogram",draw_histogram_image(hist_crp));
+    namedWindow("Max FIlter",WINDOW_NORMAL);
+    imshow("Max FIlter", max_filtered);
 
+    Mat Bilateral;
+    bilateralFilter( max_filtered, Bilateral, 100, 10, 10);
+    namedWindow("Bilateral",WINDOW_NORMAL);
+    imshow("Bilateral", Bilateral);                             ///final
+    Mat equalized = histogram_equalization(Bilateral);
+    namedWindow("equalized",WINDOW_NORMAL);
+    imshow("equalized", equalized);
+    //Mat gaus, median;
+    //medianBlur(max_filtered, median,  17);
+    //GaussianBlur(max_filtered, gaus,  Size(7, 7), 0, 0);
+    //namedWindow("Gaussian",WINDOW_NORMAL);
+    //mshow("Gaussian", gaus);
+    //Mat ft = (Mat_<double>(7,7)<<0); //7*7 is the kernel lenth, sec arg>0 remove pepper noise, <0 salt noise
+    //Mat dst = contraharmonicFilter(max_filtered, ft);
+    //namedWindow("median",WINDOW_NORMAL);
+    //imshow("median", median);
+
+    //namedWindow("contraharmonic",WINDOW_NORMAL);
+    //imshow("contraharmonic", dst);
     }
 
     if (parser.get<int>("@img_number") == 2 )
     {
 
-        Mat tmp;
-       Mat median;
-       for ( int i = 3; i < 12; i = i + 2 )
-       {
-            GaussianBlur( img, tmp, Size( i, i ), 0, 0 );
-            medianBlur ( tmp, median, i );
-            //namedWindow(to_string(i),WINDOW_NORMAL);
-           //imshow(to_string(i), tmp);
-       }
-
-       namedWindow("median",WINDOW_NORMAL);
-       imshow("median",median);
-
-
-
-
+       Mat median1=med_filter(img);
+       namedWindow("Median 1st execution",WINDOW_NORMAL);
+       imshow("Median 1st execution",median1);
+       namedWindow("original",WINDOW_NORMAL);
+       imshow("original",img);
+       Mat median2=med_filter(median1);
+       namedWindow("Median 2nd execution",WINDOW_NORMAL);
+      imshow("Median 2nd execution",median2);
+       Mat bilateral;
+       bilateralFilter(median2,bilateral,80,8,8);
+    namedWindow("Bilateral Filter",WINDOW_NORMAL);
+      imshow("Bilateral Filter",bilateral);
 
 
     while (waitKey() != 27);
@@ -440,7 +571,7 @@ int main(int argc, char* argv[])
             namedWindow(to_string(i),WINDOW_NORMAL);
             imshow(to_string(i), tmp);
         }*/
-        fastNlMeansDenoising(img,fast, 20, 5, 35);
+        fastNlMeansDenoising(img,fast, 12, 5, 35);
         namedWindow("fast",WINDOW_NORMAL);
         imshow("fast", fast);
         //GaussianBlur( img_padded, tmp, Size( KERNEL_LENGTH, KERNEL_LENGTH ), 0, 0 );
@@ -482,7 +613,7 @@ int main(int argc, char* argv[])
            }
 
            show_frequency_spectrum(magnitude, "Magnitude_cropped");
-           Mat filtered = magnitude_to_img(magnitude, phase, planes, img);
+           Mat filtered = complex_to_img(magnitude, phase, planes, img);
            namedWindow("FilteredImage",WINDOW_NORMAL);
            cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
            imshow("FilteredImage", filtered);
@@ -498,7 +629,7 @@ int main(int argc, char* argv[])
 
 
         Mat filter;
-           filter = butter_lowpass(500, 3, cmp.size());
+        filter = butter_lowpass(500, 3, cmp.size());
           /*  if (parser.has("lowpass")) {
                 filter = butter_lowpass(250, 2, complex.size());
             } else {
@@ -506,54 +637,19 @@ int main(int argc, char* argv[])
             }
             */
 
-                 Mat filtered=apply_filter(cmp,filter,img);
-                 namedWindow("Filtered image",WINDOW_NORMAL);
-                 imshow("Filtered image", filtered);
-
-
-
+        Mat filtered=apply_filter(cmp,filter,img);
+        namedWindow("Filtered image",WINDOW_NORMAL);
+        imshow("Filtered image", filtered);
         // Visualize
-            namedWindow("Input",WINDOW_NORMAL);
-            imshow("Input", img);
-/*
-
-        vector<Rect> ROIs;
-        namedWindow("ROI", WINDOW_NORMAL);
-        selectROIs("ROI", mag_copy, ROIs);
-
-       if(ROIs.size()<1)
-             return 0;
-        for (size_t i = 0; i < ROIs.size(); i++)
-        {
-            rectangle(magnitude, ROIs[i], Scalar(0), CV_FILLED);
-        }
-
-        show_frequency_spectrum(magnitude, "Magnitude_cropped");
-       filtered = magnitude_to_img(magnitude, phase, planes, img);
-        namedWindow("FilteredImage",WINDOW_NORMAL);
-        cv::normalize(filtered, filtered, 0, 1, cv::NORM_MINMAX);
-        imshow("FilteredImage", filtered);
-        namedWindow("OriginalImage",WINDOW_NORMAL);
-        imshow("OriginalImage", img);
-   }
-
-    // Display Cropped Image
-    // namedWindow("Imagecr",WINDOW_AUTOSIZE);
-    //  imshow("Imagecr", imCrop);
-     // Show the image
-
-
-
-    //namedWindow("Median FIlter",WINDOW_NORMAL);
-    //imshow("Median FIlter", median);
-
-
+        namedWindow("Input",WINDOW_NORMAL);
+        imshow("Input", img);
+    }
 
     // Wait for escape key press before returning
-        */
-    while (waitKey() != 27);
 
+    while (waitKey() != 27)
+        ; // (do nothing)
 
     return 0;
-}
+
 }
